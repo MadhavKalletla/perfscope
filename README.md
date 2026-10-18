@@ -1,11 +1,11 @@
 # perfscope: Real-Time Process & System Performance Profiler
 
-[![CI](https://github.com/your-username/perfscope/actions/workflows/ci.yml/badge.svg)](https://github.com/your-username/perfscope/actions/workflows/ci.yml)
+[![CI](https://github.com/MadhavKalletla/perfscope/actions/workflows/ci.yml/badge.svg)](https://github.com/MadhavKalletla/perfscope/actions/workflows/ci.yml)
 ![Language](https://img.shields.io/badge/Language-C%2B%2B17-blue.svg)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-brightgreen.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
-`perfscope` is a lightweight, high-performance process and system profiler written in modern **C++17**. Designed specifically to demonstrate deep operating systems internals and performance engineering concepts relevant to **Windows Device Performance and Kernel/OS teams**, it features a native Win32 platform implementation with a transparent `/proc` fallback for Linux.
+`perfscope` is a lightweight, high-performance process and system profiler written in modern **C++17**. Built to explore operating systems internals and performance engineering, with a native Win32 implementation and a Linux `/proc` fallback.
 
 ---
 
@@ -18,11 +18,11 @@
 2. **`perfscope top`**: High-performance system process monitor.
    - Enumerate all active system processes with snapshot inspection.
    - Sort dynamically by CPU consumption or physical working set memory.
-   - Sub-second execution using optimized single-pass kernel snapshotting.
+   - Takes a single process snapshot and samples CPU over a short interval.
 3. **`perfscope analyze`**: Statistical analysis and heuristic anomaly detection.
    - Calculates **Min, Mean, Median (p50), 95th Percentile (p95), 99th Percentile (p99), Max**, and **Standard Deviation** for all metrics.
    - **Sudden CPU Spike Detection**: Identifies sharp deltas ($\ge 40\%$) and statistical outliers ($\mu + 2.5\sigma$).
-   - **Steady Memory Growth (Leak Detection)**: Uses Ordinary Least Squares (OLS) linear regression over time to detect sustained leaks ($R^2 \ge 0.75$, positive slope in MB/min).
+   - **Steady Memory Growth (Leak Detection)**: Uses Ordinary Least Squares (OLS) linear regression over time to detect sustained leaks ($R^2 \ge 0.75$, slope ≥ 50,000 bytes/s, about 48.8 KiB/s).
 4. **`perfscope bench`**: Reproducible built-in workload harness.
    - **CPU-bound multi-threaded workload**: saturates all logical hardware threads with compute loops.
    - **Memory allocation & physical page faulting**: commits virtual memory in chunks and forces physical page frame allocation by touching 4KB pages.
@@ -142,7 +142,7 @@ Console Output:
 PID     Process Name                     CPU %     Working Set   Private Bytes   Threads   Handles
 ==================================================================================================
 6664    chrome.exe                        4.2%       490.64 MB       607.77 MB        26       394
-14696   Antigravity IDE.exe               9.5%       460.41 MB       637.50 MB        25       631
+14696   code.exe                          9.5%       460.41 MB       637.50 MB        25       631
 3640    chrome.exe                        0.1%       451.20 MB       538.66 MB        27       506
 13572   chrome.exe                        0.8%       438.91 MB       326.41 MB        50      4895
 2808    chrome.exe                        0.0%       340.09 MB       420.95 MB        26       405
@@ -193,7 +193,7 @@ Identified 2 anomaly event(s):
 
  [2] Steady Memory Growth (Suspected Leak)
      Description: Private memory grew by 5.00 MB at an estimated rate of +120.00 MB/min (from 20.00 MB to 25.00 MB).
-     Rule Logic:  Rule: OLS Linear Regression slope (2.00 MB/s) >= 48.83 KB/s AND goodness of fit R² (1.000) >= 0.750.
+     Rule Logic:  Rule: OLS Linear Regression slope (2,000,000 bytes/s) >= 50,000 bytes/s (about 48.8 KiB/s) AND goodness of fit R² (1.000) >= 0.750.
 ```
 
 ### 4. Run Built-In Benchmarks
@@ -206,7 +206,7 @@ perfscope bench
 
 ## Benchmark Results
 
-> **HONESTY POLICY**: Benchmark numbers vary by CPU architecture, core count, thermal throttling, and OS scheduling state. Below is an authentic run on our test hardware, followed by a template placeholder to paste your own measured machine results.
+> **HONESTY POLICY**: Benchmark numbers vary by CPU architecture, core count, thermal throttling, and OS scheduling state. Results vary by hardware; the run below is from the author's machine.
 
 ### Measured Run on Author's Test System
 - **CPU**: AMD/Intel x86_64 (12 Logical Cores)
@@ -240,18 +240,6 @@ Benchmark completed successfully.
 
 ---
 
-### [PASTE YOUR BENCHMARK RESULTS HERE]
-
-```text
-<!-- 
-Run `perfscope bench` on your machine and paste the output below:
--->
-
-[PASTE OUTPUT FROM `perfscope bench` HERE]
-```
-
----
-
 ## Key Performance Design Decisions
 
 1. **Working Set vs. Private Bytes**:
@@ -263,10 +251,10 @@ Run `perfscope bench` on your machine and paste the output below:
      $$\text{CPU \%} = \frac{\Delta \text{KernelTime} + \Delta \text{UserTime}}{\Delta t \times C} \times 100$$
 3. **Linear Regression for Memory Leak Detection**:
    - Simple threshold rules ("is memory higher than at step 1?") cause false alarms during normal heap fragmentation or initial startup caching.
-   - `perfscope` applies Ordinary Least Squares (OLS) linear regression across private bytes over time, checking both the rate of growth (slope $\ge 50$ KB/s) and goodness-of-fit correlation ($R^2 \ge 0.75$).
+   - `perfscope` applies Ordinary Least Squares (OLS) linear regression across private bytes over time, checking both the rate of growth (slope ≥ 50,000 bytes/s, about 48.8 KiB/s) and goodness-of-fit correlation ($R^2 \ge 0.75$).
 4. **Lock Contention Microbenchmark**:
-   - Demonstrates the cost of OS kernel transitions. `std::mutex` contends in user space and drops into kernel wait objects (`WaitOnAddress` or futex), incurring context switch penalties (~1,000 to 3,000 CPU cycles).
-   - In contrast, `std::atomic` uses hardware bus locking / cache coherence protocols (`LOCK XADD` on x86), remaining entirely in user space.
+   - Demonstrates the cost of OS kernel transitions. `std::mutex` can involve a kernel wait and a context switch (e.g., via `WaitOnAddress` on Windows or `futex` on Linux) while atomics stay entirely in user space using hardware bus locking (`LOCK XADD` on x86).
+   - On the author's 12-core test machine, `std::atomic` was measured at approximately **3.2× faster** than `std::mutex` under contention (see Benchmark Results above).
 
 ---
 

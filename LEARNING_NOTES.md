@@ -1,6 +1,6 @@
 # perfscope: Technical Learning Notes & OS Internals Guide
 
-This document provides a comprehensive technical breakdown of `perfscope`, detailed explanations of the operating system concepts it exercises, and in-depth answers to 10 likely interview questions targeted for a **Microsoft Windows Device Performance & Core OS** engineering team.
+This document provides a comprehensive technical breakdown of `perfscope`, detailed explanations of the operating system concepts it exercises, and in-depth answers to 10 key concepts questions covering OS internals and performance engineering.
 
 ---
 
@@ -12,7 +12,7 @@ This document provides a comprehensive technical breakdown of `perfscope`, detai
    - [Working Set vs. Private Bytes vs. Commit Charge](#working-set-vs-private-bytes-vs-commit-charge)
    - [Handles & Windows Kernel Objects](#handles--windows-kernel-objects)
    - [Lock Contention: Mutexes vs. Atomics](#lock-contention-mutexes-vs-atomics)
-3. [10 Technical Interview Questions & High-Scoring Answers](#3-10-technical-interview-questions--high-scoring-answers)
+3. [Key Concepts Q\&A](#3-key-concepts-qa)
 
 ---
 
@@ -188,7 +188,7 @@ In our microbenchmark (`perfscope bench`), `std::atomic` outperformed `std::mute
 
 ---
 
-## 3. 10 Technical Interview Questions & High-Scoring Answers
+## 3. Key Concepts Q&A
 
 ### Q1: How does `perfscope` calculate CPU utilization, and why is `GetProcessTimes` preferred over PDH or Task Manager polling?
 **Answer:**
