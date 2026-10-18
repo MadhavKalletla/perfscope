@@ -183,17 +183,17 @@ No anomalies detected. Process behavior appears stable and within normal baselin
 ========================================================================================================
 ```
 
-If anomalies exist, `perfscope` reports the exact timestamp and documented rule trigger. Example output (generated from synthetic test data):
+If anomalies exist, `perfscope` reports the exact timestamp and documented rule trigger. Example output from a real run:
 ```
-Identified 2 anomaly event(s):
+Identified anomaly events:
 
  [1] Sudden CPU Spike
-     Description: CPU surged by +76.5% (from 5.5% to 82.0%) at 2026-10-18T18:00:02.000Z
-     Rule Logic:  Rule: Consecutive sample delta (76.5%) exceeds threshold (40%).
+     Description: CPU surged by +87.2% (from 5.5% to 92.8%) at 2026-10-18T19:54:51.496Z
+     Rule Logic:  Rule: Consecutive sample delta (87.21%) exceeds threshold (40%).
 
  [2] Steady Memory Growth (Suspected Leak)
-     Description: Private memory grew by 5.00 MB at an estimated rate of +120.00 MB/min (from 20.00 MB to 25.00 MB).
-     Rule Logic:  Rule: OLS Linear Regression slope (2,000,000 bytes/s) >= 50,000 bytes/s (about 48.8 KiB/s) AND goodness of fit R² (1.000) >= 0.750.
+     Description: Private memory grew by 38.74 MB at an estimated rate of +117.33 MB/min (from 61.63 MB to 100.38 MB).
+     Rule Logic:  Rule: OLS Linear Regression slope (1.96 MB/s) >= 48.83 KB/s AND goodness of fit R² (0.999) >= 0.750.
 ```
 
 ### 4. Run Built-In Benchmarks
@@ -228,6 +228,7 @@ perfscope bench
       Allocated & Touched: 100.00 MB
       4KB Pages faulted:   25600 pages
       Allocation Rate:     43.61 MB/sec
+      Note:                Allocation Rate reflects a deliberate 100 ms pause between 5 MB chunks, not memory bandwidth; the benchmark's purpose is to demonstrate demand paging (25,600 page faults for 100 MB).
 
 [3/3] Running Multi-threaded Lock Contention (Mutex vs Atomics)...
       Workload:          Contended counter increment loops comparing std::mutex locks to lock-free std::atomic fetch_add.
