@@ -1,0 +1,33 @@
+# Build directories
+build/
+bin/
+out/
+.cache/
+CMakeFiles/
+CMakeCache.txt
+*.cmake
+Makefile
+
+# Compiled objects and libraries
+*.obj
+*.o
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
+*.exe
+
+# IDE / Editor files
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.sln
+*.vcxproj*
+
+# Test output / logs
+*.log
+*.csv
+!test_data/*.csv
