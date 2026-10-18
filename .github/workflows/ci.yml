@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-test:
+    name: Build & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ windows-latest, ubuntu-latest ]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++
+
+      - name: Configure CMake (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure CMake (Linux)
+        if: runner.os == 'Linux'
+        run: cmake -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build perfscope & tests
+        run: cmake --build build --config Release
+
+      - name: Run unit test suite
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Verify CLI Help
+        if: runner.os == 'Windows'
+        run: ./build/Release/perfscope.exe --help || ./build/perfscope.exe --help
+
+      - name: Verify CLI Help (Linux)
+        if: runner.os == 'Linux'
+        run: ./build/perfscope --help
+
+      - name: Run Built-in Benchmark Workload
+        if: runner.os == 'Windows'
+        run: ./build/Release/perfscope.exe bench --duration 1 || ./build/perfscope.exe bench --duration 1
+
+      - name: Run Built-in Benchmark Workload (Linux)
+        if: runner.os == 'Linux'
+        run: ./build/perfscope bench --duration 1
