@@ -1,11 +1,11 @@
-# perfscope: Real-Time Process & System Performance Profiler
+# perfscope: Process Performance Profiler & Benchmark Suite
 
 [![CI](https://github.com/MadhavKalletla/perfscope/actions/workflows/ci.yml/badge.svg)](https://github.com/MadhavKalletla/perfscope/actions/workflows/ci.yml)
 ![Language](https://img.shields.io/badge/Language-C%2B%2B17-blue.svg)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-brightgreen.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
-`perfscope` is a lightweight, high-performance process and system profiler written in modern **C++17**. Built to explore operating systems internals and performance engineering, with a native Win32 implementation and a Linux `/proc` fallback.
+`perfscope` is a lightweight process and system profiler written in modern **C++17**. Built to explore operating systems internals and performance engineering, with a native Win32 implementation and a Linux `/proc` fallback.
 
 ---
 
@@ -64,7 +64,7 @@
   - `CreateToolhelp32Snapshot`: Inspects thread topologies and enumerates running processes.
 - **Linux Fallback (`LinuxSampler`)**:
   - Reads `/proc/[pid]/stat` for `utime`, `stime`, and thread count.
-  - Reads `/proc/[pid]/status` for `VmRSS` (working set) and `VmData` (private committed pages).
+  - Reads `/proc/[pid]/status` for `VmRSS` (working set) and `VmData` (an approximation of private memory).
   - Reads `/proc/[pid]/fd` count for open file descriptors.
 
 ---
@@ -183,7 +183,7 @@ No anomalies detected. Process behavior appears stable and within normal baselin
 ========================================================================================================
 ```
 
-If anomalies exist, `perfscope` reports the exact timestamp and documented rule trigger:
+If anomalies exist, `perfscope` reports the exact timestamp and documented rule trigger. Example output (generated from synthetic test data):
 ```
 Identified 2 anomaly event(s):
 
@@ -218,16 +218,19 @@ perfscope bench
 =======================================================
 
 [1/3] Running CPU-bound multi-threaded workload (3 seconds)...
+      Workload:          Floating-point multiply-accumulate loop with volatile accumulator to prevent compiler optimization.
       Threads utilized:  12
       Total operations:  6901785000
       Throughput:        2291.33 Million Ops/sec
 
 [2/3] Running Memory Allocation & Physical Page Touch workload (100 MB)...
+      Workload:          Allocates 5 MB chunks touching 4KB pages to force physical page faults, paced by step delays.
       Allocated & Touched: 100.00 MB
       4KB Pages faulted:   25600 pages
       Allocation Rate:     43.61 MB/sec
 
 [3/3] Running Multi-threaded Lock Contention (Mutex vs Atomics)...
+      Workload:          Contended counter increment loops comparing std::mutex locks to lock-free std::atomic fetch_add.
       Contending Threads:  12
       Total Operations:    3999996
       std::mutex Duration: 258.92 ms (15.45 M ops/sec)
@@ -253,7 +256,7 @@ Benchmark completed successfully.
    - Simple threshold rules ("is memory higher than at step 1?") cause false alarms during normal heap fragmentation or initial startup caching.
    - `perfscope` applies Ordinary Least Squares (OLS) linear regression across private bytes over time, checking both the rate of growth (slope ≥ 50,000 bytes/s, about 48.8 KiB/s) and goodness-of-fit correlation ($R^2 \ge 0.75$).
 4. **Lock Contention Microbenchmark**:
-   - Demonstrates the cost of OS kernel transitions. `std::mutex` can involve a kernel wait and a context switch (e.g., via `WaitOnAddress` on Windows or `futex` on Linux) while atomics stay entirely in user space using hardware bus locking (`LOCK XADD` on x86).
+   - Demonstrates the cost of OS kernel transitions. `std::mutex` can involve a kernel wait and a context switch (e.g., via `WaitOnAddress` on Windows or `futex` on Linux) while atomics stay entirely in user space using cache-line locking via the CPU's cache coherence protocol (LOCK XADD on x86).
    - On the author's 12-core test machine, `std::atomic` was measured at approximately **3.2× faster** than `std::mutex` under contention (see Benchmark Results above).
 
 ---

@@ -34,7 +34,7 @@ This document provides a comprehensive technical breakdown of `perfscope`, detai
 ### `LinuxSampler` (/proc Fallback)
 - **Mechanics**: Reads virtual files exposed by Linux `procfs`:
   - `/proc/[pid]/stat`: Parses fields 14 (`utime`), 15 (`stime`), and 20 (`num_threads`).
-  - `/proc/[pid]/status`: Extracts `VmRSS` (Resident Set) and `VmData` (Private committed data).
+  - `/proc/[pid]/status`: Extracts `VmRSS` (Resident Set) and `VmData` (an approximation of private memory).
   - `/proc/[pid]/fd`: Computes descriptor count by counting directory entries.
 - **Timing**: Normalized via `sysconf(_SC_CLK_TCK)` (typically 100 Hz user jiffies).
 
@@ -129,7 +129,6 @@ Understanding the distinction between these three metrics is paramount for perfo
 | :--- | :--- | :--- | :--- |
 | **Working Set** | `WorkingSetSize` | Total virtual memory pages currently resident in physical RAM frames. Includes both private pages and shared DLL pages. | Reflects current physical memory footprint. Can shrink suddenly if the OS initiates working set trimming under system memory pressure. |
 | **Private Bytes** | `PagefileUsage` / `PrivateUsage` | Memory committed by this process that cannot be shared with any other process. | **The true indicator of a memory leak.** If private bytes grow monotonically, the process is accumulating unfreed heap allocations. |
-| **Virtual Size** | `PeakVirtualSize` | Total virtual address space reserved + committed. | Represents address space reservations; does not directly consume physical RAM. |
 
 #### Working Set Trimming
 When physical RAM becomes constrained, the Windows Working Set Manager trims pages from process working sets:
@@ -167,16 +166,16 @@ In our microbenchmark (`perfscope bench`), `std::atomic` outperformed `std::mute
 
 #### 1. Hardware-Level Synchronization (`std::atomic`)
 - `atomic.fetch_add()` compiles directly to a hardware atomic instruction (e.g., `LOCK XADD [mem], reg` on x86/x64).
-- The `LOCK` prefix asserts the hardware bus lock or uses CPU cache coherency protocols (**MESI / MOESI**):
+- The `LOCK` prefix uses cache-line locking via the CPU's cache coherence protocol (LOCK XADD on x86):
   - The cache line containing the counter is requested in **Exclusive (E)** or **Modified (M)** state.
   - Neighboring CPU core caches invalidate their copy of the cache line.
-  - The operation executes in silicon in **~10 to 30 CPU clock cycles** (~3 to 10 nanoseconds).
+  - The operation executes in silicon in user space without kernel transitions.
   - No OS kernel transition occurs.
 
 #### 2. Operating System Mutex Synchronization (`std::mutex`)
-- On Windows, `std::mutex` wraps `SRWLock` (Slim Reader/Writer Lock) or a Win32 Mutex:
+- `std::mutex` is implementation-dependent (for example SRWLOCK-based on the MSVC STL, pthread-based on MinGW/libstdc++); under contention it can involve a kernel wait and a context switch:
   - First, it attempts a fast user-mode atomic compare-and-swap (CAS).
-  - If uncontended, it is fast (~20 ns).
+  - If uncontended, it is fast and remains in user space.
   - **Upon contention**, the thread cannot proceed. It executes a system call into the Windows kernel:
     1. The thread transitions from Ring 3 (User) to Ring 0 (Kernel) via `SYSCALL`.
     2. CPU registers and thread context are saved.
@@ -184,7 +183,7 @@ In our microbenchmark (`perfscope bench`), `std::atomic` outperformed `std::mute
     4. The OS Scheduler executes a **Context Switch**, choosing another thread to run.
     5. Cache hierarchies (L1, L2, TLB) are polluted by the incoming thread.
     6. When the lock owner releases, another system call wakes the sleeping thread (`Ready` -> `Running`).
-  - Total latency per contended acquisition: **~1,000 to 5,000 nanoseconds** (thousands of clock cycles).
+  - Total latency per contended acquisition is significantly higher than uncontended access due to kernel transitions, thread state changes, and scheduler latency.
 
 ---
 
@@ -199,10 +198,7 @@ $$\Delta \text{ProcessTime} = (\text{Kernel}_2 - \text{Kernel}_1) + (\text{User}
 $$\Delta \text{WallTime} = \text{steady\_clock}(t_2 - t_1) \times 10,000,000$$
 $$\text{CPU \%} = \frac{\Delta \text{ProcessTime}}{\Delta \text{WallTime} \times \text{LogicalCores}} \times 100\%$$
 
-We prefer `GetProcessTimes` because:
-1. It is a direct, zero-overhead Win32 system call querying the process's `EPROCESS` accounting structures.
-2. It avoids the heavy COM/registry overhead of Performance Data Helper (PDH) or WMI.
-3. It guarantees deterministic, high-resolution metric deltas normalized across the exact processor count (`GetSystemInfo`)."
+We prefer `GetProcessTimes` because it is a direct system call querying process accounting structures that avoids the extra overhead of PDH or WMI, while allowing accurate deltas normalized across the logical processor count (`GetSystemInfo`)."
 
 ---
 
@@ -229,9 +225,9 @@ A handle leak occurs when an application creates or opens kernel objects (e.g., 
 
 ### Q4: In your benchmark, why was atomic increment over 3x faster than mutex increment under contention?
 **Answer:**
-"`std::atomic::fetch_add` compiles to a single hardware instruction with a bus lock prefix (`LOCK XADD`), executing entirely in user space in 10-30 clock cycles. Cache coherency protocols (MESI) ensure store visibility across CPU cores by transitioning cache lines between Shared and Modified states.
+"`std::atomic::fetch_add` compiles to a single hardware instruction using cache-line locking via the CPU's cache coherence protocol (LOCK XADD on x86), executing entirely in user space without kernel transitions. Cache coherency protocols (MESI) ensure store visibility across CPU cores by transitioning cache lines between Shared and Modified states.
 
-Conversely, when `std::mutex` encounters contention, the contending thread must yield. This requires a transition from Ring 3 to Ring 0 via a `SYSCALL` into the Windows kernel. The scheduler changes the thread's state to `Waiting`, saves its register context, evicts it from the CPU, and executes a context switch. A context switch costs 1,000 to 3,000 CPU cycles and causes L1/L2 cache and TLB misses."
+Conversely, when `std::mutex` encounters contention, the contending thread must yield. This requires a transition from Ring 3 to Ring 0 via a `SYSCALL` into the Windows kernel. The scheduler changes the thread's state to `Waiting`, saves its register context, evicts it from the CPU, and executes a context switch. A context switch incurs significant CPU overhead, requiring saving register state and causing cache and TLB misses."
 
 ---
 
@@ -253,7 +249,7 @@ Physical page frames are only allocated on-demand when the CPU attempts to read 
 1. It calculates the slope $m$ (bytes gained per second).
 2. It calculates the Pearson coefficient of determination ($R^2$).
 
-A leak is only flagged if $m \ge 50 \text{ KB/s}$ AND $R^2 \ge 0.75$. This mathematical rule guarantees that memory is growing steadily and monotonically over time rather than exhibiting noisy, temporary spikes."
+A leak is only flagged if the slope $m \ge 50,000 \text{ bytes/s}$ (about 48.8 KiB/s) AND $R^2 \ge 0.75$. This indicates a strong, sustained linear upward trend. It is a heuristic and can produce false positives, for example a cache that warms up steadily."
 
 ---
 
@@ -263,10 +259,15 @@ A leak is only flagged if $m \ge 50 \text{ KB/s}$ AND $R^2 \ge 0.75$. This mathe
 
 System processes (like `csrss.exe`, `lsass.exe`, or anti-cheat services protected by Protected Process Light / PPL) deny `PROCESS_VM_READ` to standard non-elevated callers.
 
-`perfscope` implements resilient fallback:
-1. It first attempts `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, ...)`.
-2. If that fails, it retries with `PROCESS_QUERY_LIMITED_INFORMATION` only.
-3. If still denied, it checks `GetLastError() == ERROR_ACCESS_DENIED` and prints a clear message explaining that the target is a protected system process requiring Administrator privileges."
+`perfscope` implements resilient fallback and explicit error handling:
+1. Before sampling begins, `is_process_running` checks `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)`. If this fails, the CLI reports: `"Error: Process with PID <pid> is not running or accessible."`
+2. During sampling, `sample_process` first attempts `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, FALSE, pid)`.
+3. If that fails, it retries with fewer rights: `PROCESS_QUERY_LIMITED_INFORMATION` only.
+4. If still denied, it checks `GetLastError()`:
+   - `ERROR_ACCESS_DENIED`: prints `"Access denied when opening PID <pid>. Run with administrator privileges to monitor system processes."`
+   - `ERROR_INVALID_PARAMETER`: prints `"Process PID <pid> not found or has already terminated."`
+   - Other errors: prints `"Failed to open process PID <pid> (Win32 Error: <err>)."`
+5. It also calls `GetExitCodeProcess` to detect if the target process exited mid-run (`exit_code != STILL_ACTIVE`), setting `"Process PID <pid> has exited."`
 
 ---
 
@@ -295,9 +296,9 @@ $$\text{CPU \%} = \frac{0.05 \text{ s}}{10.0 \text{ s} \times 1 \text{ core}} \t
 ### Q10: How would you extend `perfscope` to profile thread context switch rates and lock waiting time using ETW?
 **Answer:**
 "To profile sub-millisecond thread scheduling events without invasive code injection, I would integrate **Event Tracing for Windows (ETW)**:
-1. **Kernel Trace Session**: Start an ETW session enabling the `Microsoft-Windows-Kernel-Process` and `Microsoft-Windows-Kernel-Process` providers with the `CSWITCH` (Context Switch) kernel flag.
+1. **Kernel Trace Session**: Start an NT Kernel Logger ETW session with `EVENT_TRACE_FLAG_CSWITCH` enabled.
 2. **Consumer Thread**: Use `OpenTrace` and `ProcessTrace` in real-time mode to consume event records.
 3. **Event Payloads**:
    - For every context switch, inspect `OldThreadId`, `NewThreadId`, and `WaitReason` (e.g., Executive, FreePage, UserRequest, EventPair).
    - Compute context switches per second and thread off-CPU wait time.
-ETW is the gold standard inside Microsoft because it is built into the Windows kernel with less than 2% runtime overhead."
+ETW is built directly into the Windows kernel with minimal runtime overhead."
